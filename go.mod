@@ -10,7 +10,9 @@ require (
 	github.com/coreos/go-oidc v2.0.0+incompatible
 	github.com/dimfeld/httppath v0.0.0-20170720192232-ee938bf73598
 	github.com/felixge/httpsnoop v1.0.0 // indirect
+	github.com/ghodss/yaml v1.0.0
 	github.com/go-redis/redis v6.15.2+incompatible
+	github.com/go-yaml/yaml v2.1.0+incompatible
 	github.com/google/go-cmp v0.3.0
 	github.com/hashicorp/memberlist v0.1.4
 	github.com/instana/go-sensor v1.4.16 // indirect
