@@ -34,7 +34,7 @@ type (
 	tokenOidcSpec struct {
 		typ             roleCheckType
 		SecretsFile     string
-		secretsRegistry *secrets.Registry
+		secretsRegistry secrets.Encryption //*secrets.Registry
 	}
 
 	tokenOidcFilter struct {
@@ -111,10 +111,6 @@ func (s *tokenOidcSpec) CreateFilter(args []interface{}) (filters.Filter, error)
 		return nil, filters.ErrInvalidFilterParameters
 	}
 
-	if err != nil {
-		log.Errorf("Failed to create ciphersuite: %v.", err)
-		return nil, filters.ErrInvalidFilterParameters
-	}
 	h := sha256.New()
 	for _, s := range sargs {
 		h.Write([]byte(s))

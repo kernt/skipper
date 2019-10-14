@@ -7,6 +7,7 @@ type Encryption interface {
 	Decrypt([]byte) ([]byte, error)
 	Encrypt([]byte) ([]byte, error)
 	Close()
+	NewEncrypter(time.Duration, string) (Encryption, error)
 }
 
 type Registry struct {
