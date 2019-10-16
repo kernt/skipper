@@ -121,8 +121,8 @@ func (s *tokenOidcSpec) CreateFilter(args []interface{}) (filters.Filter, error)
 	log.Debugf("Generated Cookie Name: %s", generatedCookieName)
 
 	redirectURL, err := url.Parse(sargs[3])
-	if err != nil {
-		return nil, fmt.Errorf("the redirect url %s is not valid: %v", sargs[3], err)
+	if err != nil || sargs[3] == "" {
+		return nil, fmt.Errorf("invalid redirect url '%s': %v", sargs[3], err)
 	}
 
 	encrypter, err := s.secretsRegistry.NewEncrypter(1*time.Minute, s.SecretsFile)

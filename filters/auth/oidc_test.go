@@ -77,7 +77,6 @@ func createOIDCServer() *httptest.Server {
 }`
 	var oidcServer *httptest.Server
 	oidcServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		println(r.RequestURI)
 		switch r.RequestURI {
 		case "/.well-known/openid-configuration":
 
@@ -106,7 +105,7 @@ func createOIDCServer() *httptest.Server {
 
 func makeTestingFilter(claims []string) (*tokenOidcFilter, error) {
 	r := secrettest.NewTestRegistry()
-	encrypter, err := r.NewEncrypter("key")
+	encrypter, err := r.NewEncrypter(5*time.Second, "key")
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +326,7 @@ func TestOIDCSetup(t *testing.T) {
 		provider       string
 		client         string
 		clientsecret   string
-		callback       string
+		callback       bool
 		scopes         []string
 		claims         map[string]string
 		authType       roleCheckType // checkOIDCAnyClaims checkOIDCAllClaims
@@ -335,38 +334,58 @@ func TestOIDCSetup(t *testing.T) {
 		expected       int
 		expectErr      bool
 	}{{
-		msg:          "wrong provider, no callback",
-		provider:     "no url",
+		msg:       "wrong provider",
+		provider:  "no url",
+		expectErr: true,
+	}, {
+		msg:       "no authType",
+		expectErr: true,
+	}, {
+		msg:          "has authType, but no callback",
 		client:       "myclient",
 		clientsecret: "mysec",
-		callback:     "",
+		authType:     checkOIDCAnyClaims,
 		expectErr:    true,
 	}, {
-		msg:          "no provider, but no callback",
+		msg:          "has authType, and callback",
 		client:       "myclient",
 		clientsecret: "mysec",
-		callback:     "",
+		callback:     true,
+		authType:     checkOIDCAnyClaims,
 		expectErr:    false,
 	}} {
 		t.Run(tc.msg, func(t *testing.T) {
 			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				_, _ = w.Write([]byte("OK"))
+				w.Write([]byte("OK"))
 			}))
-			t.Logf("backend listener: %v", backend.Listener)
-			//var dat *oidc.Provider
-			oidcServer := createOIDCServer()
-			t.Logf("oidc/auth server listener: %v", oidcServer.Listener)
+			t.Logf("backend URL: %s", backend.URL)
 
+			oidcServer := createOIDCServer()
+			t.Logf("oidc/auth server URL: %s", oidcServer.URL)
+
+			var cb *httptest.Server
+			if tc.callback {
+				cb = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Write([]byte("CB"))
+				}))
+
+			}
 			// create filter
 			sargs := []interface{}{
 				tc.client,
 				tc.clientsecret,
-				tc.callback,
 			}
-			if tc.provider != "" {
-				sargs = append([]interface{}{oidcServer.URL}, sargs...)
+			if cb == nil {
+				sargs = append(sargs, "")
 			} else {
+				sargs = append(sargs, cb.URL)
+			}
+
+			// test that, we get an error if provider is no url
+			if tc.provider != "" {
 				sargs = append([]interface{}{tc.provider}, sargs...)
+			} else {
+				sargs = append([]interface{}{oidcServer.URL}, sargs...)
 			}
 
 			sargs = append(sargs, strings.Join(tc.scopes, " "))
@@ -391,16 +410,21 @@ func TestOIDCSetup(t *testing.T) {
 			fr.Register(spec)
 
 			f, err := spec.CreateFilter(sargs)
-			if err != nil && !tc.expectErr {
-				t.Fatalf("Failed to create filter: %v", err)
-			} else if tc.expectErr {
-				t.Fatalf("Want error but got filter: %v", f)
+			if tc.expectErr {
+				if err == nil {
+					t.Fatalf("Want error but got filter: %v", f)
+				}
+				return //OK
+			} else if err != nil {
+				t.Fatalf("Unexpected error while creating filter: %v", err)
 			}
 
-			fOIDC := f.(*tokenOidcFilter)
-			defer fOIDC.Close()
+			t.Logf("filter: %v", f)
 
-			t.Logf("sargs: %v", sargs)
+			// fOIDC := f.(*tokenOidcFilter)
+			// defer fOIDC.Close()
+
+			// t.Logf("sargs: %v", sargs)
 
 			/////////////////////////////////////
 
