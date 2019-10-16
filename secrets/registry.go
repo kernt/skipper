@@ -2,21 +2,25 @@ package secrets
 
 import "time"
 
+type EncrypterCreator interface {
+	NewEncrypter(time.Duration, string) (Encryption, error)
+}
+
 type Encryption interface {
 	CreateNonce() ([]byte, error)
 	Decrypt([]byte) ([]byte, error)
 	Encrypt([]byte) ([]byte, error)
 	Close()
-	NewEncrypter(time.Duration, string) (Encryption, error)
 }
 
 type Registry struct {
-	encrypterMap map[string]Encryption
+	encrypterMap map[string]*Encrypter
 }
 
-// NewRegistry returns a Registry to store and manage secrets
+// NewRegistry returns a Registry and implements EncrypterCreator to
+// store and manage secrets
 func NewRegistry() *Registry {
-	e := make(map[string]Encryption)
+	e := make(map[string]*Encrypter)
 	return &Registry{
 		encrypterMap: e,
 	}

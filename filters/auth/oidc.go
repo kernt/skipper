@@ -34,7 +34,7 @@ type (
 	tokenOidcSpec struct {
 		typ             roleCheckType
 		SecretsFile     string
-		secretsRegistry secrets.Encryption //*secrets.Registry
+		secretsRegistry secrets.EncrypterCreator
 	}
 
 	tokenOidcFilter struct {
