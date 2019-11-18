@@ -294,7 +294,6 @@ func (c *Client) loadAndConvert() (*clusterState, []*eskip.Route, error) {
 		return nil, nil, err
 	}
 
-	// ignoring errors!!!
 	defaultFilters := c.fetchDefaultFilterConfigs()
 
 	ri, err := c.ingress.convert(state, defaultFilters)
