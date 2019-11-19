@@ -37,7 +37,7 @@ type ingressContext struct {
 	pathMode            PathMode
 	redirect            *redirectInfo
 	hostRoutes          map[string][]*eskip.Route
-	defaultFilters      map[resourceID]string
+	defaultFilters      defaultFilters
 }
 
 type ingress struct {
@@ -313,13 +313,6 @@ func applyAnnotationPredicates(m PathMode, r *eskip.Route, annotation string) er
 	return nil
 }
 
-func defaultFiltersOf(service string, namespace string, defaultFilters map[resourceID]string) (string, bool) {
-	if filters, ok := defaultFilters[resourceID{name: service, namespace: namespace}]; ok {
-		return filters, true
-	}
-	return "", false
-}
-
 func (ing *ingress) addEndpointsRule(ic ingressContext, host string, prule *pathRule) error {
 	endpointsRoute, err := convertPathRule(ic.state, ic.ingress.Metadata, host, prule, ic.pathMode)
 	if err != nil {
@@ -330,17 +323,22 @@ func (ing *ingress) addEndpointsRule(ic ingressContext, host string, prule *path
 		// Ingress status field does not support errors
 		return fmt.Errorf("error while getting service: %v", err)
 	}
-	endpointsRoute.Filters = append(ic.annotationFilters, endpointsRoute.Filters...)
+
+	// safe prepend, see: https://play.golang.org/p/zg5aGKJpRyK
+	filters := make([]*eskip.Filter, len(endpointsRoute.Filters)+len(ic.annotationFilters))
+	copy(filters, ic.annotationFilters)
+	copy(filters, endpointsRoute.Filters)
+	endpointsRoute.Filters = filters
+
 	// add pre-configured default filters
-	if defFilter, ok := defaultFiltersOf(prule.Backend.ServiceName, ic.ingress.Metadata.Namespace, ic.defaultFilters); ok {
-		// TODO: this doesn't need to be parsed all the time
-		defaultFilters, err := eskip.ParseFilters(defFilter)
-		if err != nil {
-			ic.logger.Errorf("Can not parse default filters: %v", err)
-		} else {
-			endpointsRoute.Filters = append(defaultFilters, endpointsRoute.Filters...)
-		}
+	df, err := ic.defaultFilters.getNamed(ic.ingress.Metadata.Namespace, prule.Backend.ServiceName)
+	if err != nil {
+		ic.logger.Errorf("Failed to retrieve default filters: %v.", err)
+	} else {
+		// it's safe to prepend, because type defaultFilters copies the slice during get()
+		endpointsRoute.Filters = append(df, endpointsRoute.Filters...)
 	}
+
 	err = applyAnnotationPredicates(ic.pathMode, endpointsRoute, ic.annotationPredicate)
 	if err != nil {
 		ic.logger.Errorf("failed to apply annotation predicates: %v", err)
@@ -454,6 +452,7 @@ func computeBackendWeights(backendWeights map[string]float64, rule *rule) {
 	}
 }
 
+// TODO: default filters not applied to 'extra' routes from the custom route annotations
 func (ing *ingress) addSpecRule(ic ingressContext, ru *rule) error {
 	if ru.Http == nil {
 		ic.logger.Warn("invalid ingress item: rule missing http definitions")
@@ -601,6 +600,7 @@ func createEastWestRoutes(eastWestDomainRegexpPostfix, name, ns string, routes [
 	return ewroutes
 }
 
+// TODO: check if this creates additional routes also for routes like the HTTPS redirect
 func (ing *ingress) addEastWestRoutes(hostRoutes map[string][]*eskip.Route, i *ingressItem) {
 	for _, rule := range i.Spec.Rules {
 		if rs, ok := hostRoutes[rule.Host]; ok {
@@ -683,8 +683,13 @@ func pathMode(i *ingressItem, globalDefault PathMode) PathMode {
 	return pathMode
 }
 
-func (ing *ingress) ingressRoute(i *ingressItem, redirect *redirectInfo, state *clusterState,
-	hostRoutes map[string][]*eskip.Route, defaultFilters map[resourceID]string) (*eskip.Route, error) {
+func (ing *ingress) ingressRoute(
+	i *ingressItem,
+	redirect *redirectInfo,
+	state *clusterState,
+	hostRoutes map[string][]*eskip.Route,
+	df defaultFilters,
+) (*eskip.Route, error) {
 	if i.Metadata == nil || i.Metadata.Namespace == "" || i.Metadata.Name == "" ||
 		i.Spec == nil {
 		log.Error("invalid ingress item: missing metadata")
@@ -705,7 +710,7 @@ func (ing *ingress) ingressRoute(i *ingressItem, redirect *redirectInfo, state *
 		pathMode:            pathMode(i, ing.pathMode),
 		redirect:            redirect,
 		hostRoutes:          hostRoutes,
-		defaultFilters:      defaultFilters,
+		defaultFilters:      df,
 	}
 
 	var route *eskip.Route
@@ -760,6 +765,8 @@ func (ing *ingress) addCatchAllRoutes(host string, r *eskip.Route, redirect *red
 
 // catchAllRoutes returns true if one of the routes in the list has a catchAll
 // path expression.
+//
+// TODO: this should also consider path types exact and subtree
 func catchAllRoutes(routes []*eskip.Route) bool {
 	for _, route := range routes {
 		if len(route.PathRegexps) == 0 {
@@ -776,16 +783,16 @@ func catchAllRoutes(routes []*eskip.Route) bool {
 	return false
 }
 
-// ingressToRoutes logs if an invalid found, but proceeds with the
+// convert logs if an invalid found, but proceeds with the
 // valid ones.  Reporting failures in Ingress status is not possible,
 // because Ingress status field is v1.LoadBalancerIngress that only
 // supports IP and Hostname as string.
-func (ing *ingress) ingressToRoutes(state *clusterState, defaultFilters map[resourceID]string) ([]*eskip.Route, error) {
+func (ing *ingress) convert(state *clusterState, df defaultFilters) ([]*eskip.Route, error) {
 	routes := make([]*eskip.Route, 0, len(state.ingresses))
 	hostRoutes := make(map[string][]*eskip.Route)
 	redirect := createRedirectInfo(ing.provideHTTPSRedirect, ing.httpsRedirectCode)
 	for _, i := range state.ingresses {
-		r, err := ing.ingressRoute(i, redirect, state, hostRoutes, defaultFilters)
+		r, err := ing.ingressRoute(i, redirect, state, hostRoutes, df)
 		if err != nil {
 			return nil, err
 		}
@@ -809,13 +816,4 @@ func (ing *ingress) ingressToRoutes(state *clusterState, defaultFilters map[reso
 	}
 
 	return routes, nil
-}
-
-func (ing *ingress) convert(s *clusterState, defaultFilters map[resourceID]string) ([]*eskip.Route, error) {
-	r, err := ing.ingressToRoutes(s, defaultFilters)
-	if err != nil {
-		return nil, err
-	}
-
-	return r, nil
 }
