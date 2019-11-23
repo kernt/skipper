@@ -15,7 +15,6 @@ import (
 const (
 	defaultEastWestDomainRegexpPostfix = "[.]skipper[.]cluster[.]local"
 	ingressRouteIDPrefix               = "kube"
-	defaultLoadbalancerAlgorithm       = "roundRobin"
 	backendWeightsAnnotationKey        = "zalando.org/backend-weights"
 	ratelimitAnnotationKey             = "zalando.org/ratelimit"
 	skipperfilterAnnotationKey         = "zalando.org/skipper-filter"
@@ -204,6 +203,7 @@ func convertPathRule(
 		log.Debugf("convertPathRule: Found %d endpoints %s for %s", len(eps), targetPort, svcName)
 	}
 
+	// TODO: errors may get ignored if err != nil && err != errEndpointNotFound && len(eps) == 0
 	if len(eps) == 0 || err == errEndpointNotFound {
 
 		address, err2 := getServiceURL(svc, svcPort)
@@ -232,6 +232,11 @@ func convertPathRule(
 	}
 	log.Debugf("%d routes for %s/%s/%s", len(eps), ns, svcName, svcPort)
 
+	if len(eps) == 0 {
+		return nil, nil
+	}
+
+	// Consider: if there is only a single endpoint, wouldn't it be better to use the cluster IP?
 	if len(eps) == 1 {
 		r := &eskip.Route{
 			Id:          routeID(ns, name, host, prule.Path, svcName),
@@ -250,10 +255,6 @@ func convertPathRule(
 			log.Debugf("Traffic weight %.2f for backend '%s'", prule.Backend.Traffic, svcName)
 		}
 		return r, nil
-	}
-
-	if len(eps) == 0 {
-		return nil, nil
 	}
 
 	r := &eskip.Route{
